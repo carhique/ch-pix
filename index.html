@@ -538,6 +538,24 @@
       </div>
 
 
+      <div
+        id="statusPagamento"
+        style="display:none; text-align:center; margin-top:18px; padding:14px; border-radius:15px; background:#0b0b0b; border:1px solid #292929;"
+      >
+        <div id="statusIcon" style="font-size:24px; margin-bottom:6px;">⏳</div>
+        <div id="statusTexto" style="font-size:14px; font-weight:700;">Aguardando pagamento...</div>
+        <div id="statusDetalhe" style="font-size:11px; color:#777; margin-top:5px;"></div>
+      </div>
+
+      <button
+        id="abrirPagamento"
+        class="secondary"
+        style="display:none;"
+        onclick="abrirPagamento()"
+      >
+        ↗ ABRIR PAGAMENTO
+      </button>
+
       <button
         class="ghost"
         onclick="novoValor()"
@@ -559,208 +577,30 @@
 
   /*
   =====================================================
-  CONFIGURAÇÃO
+  CH PIX + MERCADO PAGO
   =====================================================
+  O Access Token NÃO fica neste arquivo.
+  Ele permanece protegido na Vercel como:
+  MP_ACCESS_TOKEN
   */
 
-  const CHAVE_PIX =
-    "pixdoch@pm.me";
-
-  const NOME_RECEBEDOR =
-    "CH";
-
-  const CIDADE_RECEBEDOR =
-    "FORTALEZA";
+  let orderId = null;
+  let statusTimer = null;
+  let pagamentoUrl = null;
 
 
   /*
   =====================================================
-  CAMPO PIX
+  FORMATADOR DE VALOR
   =====================================================
   */
 
-  function campoPix(id, valor) {
-
-    const tamanho =
-      valor.length
-        .toString()
-        .padStart(2, "0");
-
-    return id + tamanho + valor;
-  }
-
-
-  /*
-  =====================================================
-  CRC16
-  =====================================================
-  */
-
-  function crc16(payload) {
-
-    let crc = 0xFFFF;
-
-    for (
-      let i = 0;
-      i < payload.length;
-      i++
-    ) {
-
-      crc ^=
-        payload.charCodeAt(i) << 8;
-
-      for (
-        let j = 0;
-        j < 8;
-        j++
-      ) {
-
-        if (
-          crc & 0x8000
-        ) {
-
-          crc =
-            (crc << 1) ^ 0x1021;
-
-        } else {
-
-          crc <<= 1;
-
-        }
-
-        crc &=
-          0xFFFF;
-      }
-    }
-
-    return crc
-      .toString(16)
-      .toUpperCase()
-      .padStart(4, "0");
-  }
-
-
-  /*
-  =====================================================
-  GERA PIX
-  =====================================================
-  */
-
-  function gerarPixPayload(valor) {
-
-    const merchantAccountInformation =
-
-      campoPix(
-        "00",
-        "br.gov.bcb.pix"
-      )
-
-      +
-
-      campoPix(
-        "01",
-        CHAVE_PIX
-      );
-
-
-    const merchantAccount =
-
-      campoPix(
-        "26",
-        merchantAccountInformation
-      );
-
-
-    const payloadSemCRC =
-
-      campoPix(
-        "00",
-        "01"
-      )
-
-      +
-
-      merchantAccount
-
-      +
-
-      campoPix(
-        "52",
-        "0000"
-      )
-
-      +
-
-      campoPix(
-        "53",
-        "986"
-      )
-
-      +
-
-      campoPix(
-        "54",
-        valor
-      )
-
-      +
-
-      campoPix(
-        "58",
-        "BR"
-      )
-
-      +
-
-      campoPix(
-        "59",
-        NOME_RECEBEDOR
-      )
-
-      +
-
-      campoPix(
-        "60",
-        CIDADE_RECEBEDOR
-      )
-
-      +
-
-      campoPix(
-        "62",
-        campoPix(
-          "05",
-          "***"
-        )
-      )
-
-      +
-
-      "6304";
-
-
-    return (
-      payloadSemCRC +
-      crc16(payloadSemCRC)
-    );
-
-  }
-
-
-  /*
-  =====================================================
-  GERAR PAGAMENTO
-  =====================================================
-  */
-
-  function gerarPix() {
-
+  function obterValor() {
     let valorDigitado =
       document
         .getElementById("valor")
         .value
         .trim();
-
 
     valorDigitado =
       valorDigitado
@@ -769,91 +609,399 @@
         .replace(/\./g, "")
         .replace(",", ".");
 
+    const valor = parseFloat(valorDigitado);
 
-    const valor =
-      parseFloat(valorDigitado);
-
-
-    if (
-      isNaN(valor) ||
-      valor <= 0
-    ) {
-
-      alert(
-        "Digite um valor válido."
-      );
-
-      return;
-
+    if (!Number.isFinite(valor) || valor <= 0) {
+      return null;
     }
 
-
-    const valorFormatado =
-      valor.toFixed(2);
-
-
-    const pix =
-      gerarPixPayload(
-        valorFormatado
-      );
-
-
-    document
-      .getElementById("form")
-      .style.display =
-        "none";
-
-
-    document
-      .getElementById("resultado")
-      .style.display =
-        "block";
-
-
-    document
-      .getElementById("valorFinal")
-      .innerText =
-        "R$ " +
-        valor
-          .toFixed(2)
-          .replace(".", ",");
-
-
-    document
-      .getElementById("pixCopiaCola")
-      .value =
-        pix;
-
-
-    const qr =
-      document.getElementById(
-        "qrcode"
-      );
-
-
-    qr.innerHTML = "";
-
-
-    new QRCode(
-      qr,
-      {
-        text: pix,
-
-        width: 230,
-
-        height: 230,
-
-        correctLevel:
-          QRCode.CorrectLevel.M
-      }
-    );
-
+    return valor;
   }
 
 
   /*
   =====================================================
-  COPIAR
+  STATUS
+  =====================================================
+  */
+
+  function mostrarStatus(tipo, texto, detalhe = "") {
+    const box =
+      document.getElementById("statusPagamento");
+
+    const icon =
+      document.getElementById("statusIcon");
+
+    const statusTexto =
+      document.getElementById("statusTexto");
+
+    const statusDetalhe =
+      document.getElementById("statusDetalhe");
+
+    box.style.display = "block";
+
+    if (tipo === "success") {
+      icon.innerText = "✓";
+      icon.style.color = "#7ee2a8";
+      statusTexto.style.color = "#7ee2a8";
+    } else if (tipo === "error") {
+      icon.innerText = "!";
+      icon.style.color = "#ff8a8a";
+      statusTexto.style.color = "#ff8a8a";
+    } else {
+      icon.innerText = "⏳";
+      icon.style.color = "#ffffff";
+      statusTexto.style.color = "#ffffff";
+    }
+
+    statusTexto.innerText = texto;
+    statusDetalhe.innerText = detalhe;
+  }
+
+
+  /*
+  =====================================================
+  GERAR PIX PELO MERCADO PAGO
+  =====================================================
+  */
+
+  async function gerarPix() {
+
+    const valor = obterValor();
+
+    if (valor === null) {
+      alert("Digite um valor válido.");
+      return;
+    }
+
+    const botao =
+      document.querySelector(".generate");
+
+    botao.disabled = true;
+    botao.style.opacity = "0.55";
+    botao.innerText = "GERANDO PIX...";
+
+    try {
+
+      const response =
+        await fetch("/api/criar-pix", {
+          method: "POST",
+
+          headers: {
+            "Content-Type": "application/json"
+          },
+
+          body: JSON.stringify({
+            amount: valor
+          })
+        });
+
+      const data =
+        await response.json();
+
+      if (!response.ok || !data.success) {
+        console.error("Resposta da API:", data);
+
+        const detalhe =
+          data?.details?.message ||
+          data?.error ||
+          "Não foi possível criar a cobrança.";
+
+        throw new Error(detalhe);
+      }
+
+      orderId = data.order_id;
+      pagamentoUrl = data.ticket_url || null;
+
+      document
+        .getElementById("form")
+        .style.display = "none";
+
+      document
+        .getElementById("resultado")
+        .style.display = "block";
+
+      document
+        .getElementById("valorFinal")
+        .innerText =
+          "R$ " +
+          valor
+            .toFixed(2)
+            .replace(".", ",");
+
+      /*
+      Mercado Pago retorna qr_code como Pix Copia e Cola
+      e qr_code_base64 como imagem do QR Code.
+      */
+
+      const pix =
+        data.qr_code || "";
+
+      document
+        .getElementById("pixCopiaCola")
+        .value = pix;
+
+      const qr =
+        document.getElementById("qrcode");
+
+      qr.innerHTML = "";
+
+      if (data.qr_code_base64) {
+
+        const img =
+          document.createElement("img");
+
+        img.src =
+          "data:image/png;base64," +
+          data.qr_code_base64;
+
+        img.alt = "QR Code Pix";
+
+        img.width = 230;
+        img.height = 230;
+
+        img.style.display = "block";
+
+        qr.appendChild(img);
+
+      } else if (pix) {
+
+        /*
+        Fallback: caso a API não envie a imagem,
+        usamos o código Pix para gerar o QR.
+        */
+
+        new QRCode(
+          qr,
+          {
+            text: pix,
+            width: 230,
+            height: 230,
+            correctLevel:
+              QRCode.CorrectLevel.M
+          }
+        );
+
+      } else {
+
+        throw new Error(
+          "O Mercado Pago não retornou o QR Code."
+        );
+      }
+
+      const abrir =
+        document.getElementById("abrirPagamento");
+
+      if (pagamentoUrl) {
+        abrir.style.display = "block";
+      }
+
+      mostrarStatus(
+        "pending",
+        "Aguardando pagamento...",
+        "Estamos verificando o status automaticamente."
+      );
+
+      iniciarConsulta();
+
+    } catch (error) {
+
+      console.error(error);
+
+      alert(
+        "Não foi possível gerar o Pix.\n\n" +
+        error.message
+      );
+
+    } finally {
+
+      botao.disabled = false;
+      botao.style.opacity = "1";
+      botao.innerText = "GERAR PIX";
+    }
+  }
+
+
+  /*
+  =====================================================
+  CONSULTAR STATUS
+  =====================================================
+  */
+
+  function iniciarConsulta() {
+
+    pararConsulta();
+
+    if (!orderId) {
+      return;
+    }
+
+    verificarPagamento();
+
+    statusTimer =
+      setInterval(
+        verificarPagamento,
+        3000
+      );
+  }
+
+
+  function pararConsulta() {
+
+    if (statusTimer) {
+      clearInterval(statusTimer);
+      statusTimer = null;
+    }
+  }
+
+
+  async function verificarPagamento() {
+
+    if (!orderId) {
+      return;
+    }
+
+    try {
+
+      const response =
+        await fetch(
+          "/api/status?id=" +
+          encodeURIComponent(orderId),
+          {
+            cache: "no-store"
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+
+        console.error(
+          "Erro no status:",
+          data
+        );
+
+        return;
+      }
+
+      const paymentStatus =
+        String(
+          data.payment_status || ""
+        ).toLowerCase();
+
+      const orderStatus =
+        String(
+          data.order_status || ""
+        ).toLowerCase();
+
+      /*
+      Só mostramos "confirmado" quando o backend
+      informa um estado de pagamento concluído.
+      */
+
+      const confirmado =
+        [
+          "processed",
+          "approved",
+          "paid"
+        ].includes(paymentStatus)
+        ||
+        [
+          "processed",
+          "approved"
+        ].includes(orderStatus);
+
+      if (confirmado) {
+
+        pararConsulta();
+
+        mostrarStatus(
+          "success",
+          "PAGAMENTO CONFIRMADO",
+          "O Mercado Pago confirmou o recebimento."
+        );
+
+        return;
+      }
+
+      const rejeitado =
+        [
+          "rejected",
+          "cancelled",
+          "canceled",
+          "failed"
+        ].includes(paymentStatus)
+        ||
+        [
+          "rejected",
+          "cancelled",
+          "canceled",
+          "failed"
+        ].includes(orderStatus);
+
+      if (rejeitado) {
+
+        pararConsulta();
+
+        mostrarStatus(
+          "error",
+          "PAGAMENTO NÃO APROVADO",
+          "A cobrança não foi concluída."
+        );
+
+        return;
+      }
+
+      mostrarStatus(
+        "pending",
+        "Aguardando pagamento...",
+        "Status: " +
+        (
+          data.payment_status ||
+          data.order_status ||
+          "pendente"
+        )
+      );
+
+    } catch (error) {
+
+      /*
+      Erros temporários de rede não encerram a cobrança.
+      A próxima consulta tenta novamente.
+      */
+
+      console.warn(
+        "Falha temporária ao consultar pagamento:",
+        error
+      );
+    }
+  }
+
+
+  /*
+  =====================================================
+  ABRIR PAGAMENTO
+  =====================================================
+  */
+
+  function abrirPagamento() {
+
+    if (!pagamentoUrl) {
+      return;
+    }
+
+    window.open(
+      pagamentoUrl,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  }
+
+
+  /*
+  =====================================================
+  COPIAR PIX
   =====================================================
   */
 
@@ -864,6 +1012,12 @@
         "pixCopiaCola"
       );
 
+    if (!campo.value) {
+      alert(
+        "O código Pix ainda não está disponível."
+      );
+      return;
+    }
 
     try {
 
@@ -878,30 +1032,23 @@
       document.execCommand(
         "copy"
       );
-
     }
-
 
     const mensagem =
       document.getElementById(
         "copiado"
       );
 
-
     mensagem.style.display =
       "block";
 
-
     setTimeout(
       () => {
-
         mensagem.style.display =
           "none";
-
       },
       2500
     );
-
   }
 
 
@@ -913,34 +1060,52 @@
 
   function novoValor() {
 
+    pararConsulta();
+
+    orderId = null;
+    pagamentoUrl = null;
+
     document
       .getElementById("resultado")
-      .style.display =
-        "none";
-
+      .style.display = "none";
 
     document
       .getElementById("form")
-      .style.display =
-        "block";
-
+      .style.display = "block";
 
     document
       .getElementById("valor")
-      .value =
-        "";
+      .value = "";
 
+    document
+      .getElementById("qrcode")
+      .innerHTML = "";
+
+    document
+      .getElementById("pixCopiaCola")
+      .value = "";
+
+    document
+      .getElementById("statusPagamento")
+      .style.display = "none";
+
+    document
+      .getElementById("abrirPagamento")
+      .style.display = "none";
+
+    document
+      .getElementById("copiado")
+      .style.display = "none";
 
     document
       .getElementById("valor")
       .focus();
-
   }
 
 
   /*
   =====================================================
-  FORMATAÇÃO
+  FORMATAÇÃO DO CAMPO
   =====================================================
   */
 
@@ -956,15 +1121,12 @@
             ""
           );
 
-
         if (!valor) {
 
           this.value = "";
 
           return;
-
         }
-
 
         valor =
           (
@@ -972,13 +1134,11 @@
           )
           .toFixed(2);
 
-
         this.value =
           valor.replace(
             ".",
             ","
           );
-
       }
     );
 
